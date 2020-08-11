@@ -5,33 +5,52 @@ import numpy as np
 import h5py
 from PIL import Image
 import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten
+import matplotlib.pyplot as plt
 
 def data_set(Test_Perc, Val_Perc):
     global count, Set
+    Dict = {}
     Data_Dir = '/home/chris/Documents/repos/Concrete Crack Images'
     Categories = ['Negative', 'Positive']
+    Iter_Len = 0
     for Category in Categories:
         path = os.path.join(Data_Dir,Category)
-        class_bin = Categories.index(Category)
-        for img in os.listdir(path):
-            if count == 100:
-                h5py_append(Test_Perc, Val_Perc)
-            img_file = Image.open(os.path.join(path, img))
-            img_array = np.asarray(img_file)
-            Set.append([img_array, class_bin])
-#             Size = [img_array.shape]
-#             if Size not in Sizes:
-#                 Sizes.append(Size)
-            img_file.close()
-            count += 1
+        Dict[Category] = os.listdir(path)
+        Iter_Len += len(os.listdir(path))
+    for _ in range(Iter_Len):
+        R_Key = random.choice(list(Dict.keys()))
+        In_List = Dict[R_Key]
+        class_bin = Categories.index(R_Key)
+        path = os.path.join(Data_Dir,R_Key)
+        try:
+            img = In_List.pop(0)
+        except:
+            Dict.pop(R_Key)
+            R_Key = random.choice(list(Dict.keys()))
+            In_List = Dict[R_Key]
+            class_bin = Categories.index(R_Key)
+            path = os.path.join(Data_Dir,R_Key)
+            Dict[R_Key] = In_List
+        if count == 100:
+            h5py_append(Test_Perc, Val_Perc)
+        img_file = Image.open(os.path.join(path, img))
+        img_array = np.asarray(img_file)
+        Set.append([img_array, class_bin])
+    #             Size = [img_array.shape]
+    #             if Size not in Sizes:
+    #                 Sizes.append(Size)
+        img_file.close()
+        count += 1
     if len(Set) != 0:
+        print('Final Set Len:', len(Set))
         h5py_append(Test_Perc, Val_Perc)
 
 def h5py_append(Test_Perc, Val_Perc):
     global X_train, y_train, X_val, y_val, X_test, y_test, Set, count
     Test_Length  = int(len(Set) * Test_Perc)
     Val_Length = int(len(Set) * Val_Perc)
-    random.shuffle(Set)
     for index in range(Test_Length):
         Set_Test = Set.pop(0)
         X_test.append(Set_Test[0])
@@ -94,18 +113,29 @@ def h5py_append(Test_Perc, Val_Perc):
     count = 0
         
 
-class generator:
-    def __call__(self, feature_set, label_set):
+def generator(feature_set, label_set, batch, epochs):
+    for epoch in range(epochs):
         with h5py.File('ANN_Dataset.hdf5', 'r') as hf:
+            inputs = []
+            targets = []
+            batchcount = 1
             for feature, label in zip(hf[feature_set], hf[label_set]):
-                yield feature, np.array([label])
-                
-def data_iter(feature_name, label_name):
-    ds = tf.data.Dataset.from_generator(generator(), (tf.float64, tf.int64), args=(feature_name, label_name))
-    iterator = iter(ds)
-    feature, label = iterator.get_next()
-    feature = tf.expand_dims(feature, axis=0)
-    return feature, label
+                feature = feature.flatten()
+                feature = np.resize(feature, (154587))
+                label = np.array([label])
+                inputs.append(feature)
+                targets.append(label)
+                if batchcount == batch:
+                    random.shuffle(feature)
+                    random.shuffle(label)
+                    feature = np.array(inputs, dtype='float32')
+                    label = np.array(targets, dtype='float32')
+                    yield (feature, label)
+                    inputs = []
+                    targets = []
+                    batchcount = 1
+                    continue
+                batchcount += 1
     
 if __name__ == '__main__':
     X_train = []
@@ -119,12 +149,17 @@ if __name__ == '__main__':
     count = 0
 #     data_set(0.15, 0.15)
 #     print(Sizes)
-    X_train, y_train = data_iter('X_train', 'y_train')
-    X_val, y_val = data_iter('X_val', 'y_val')
     model = tf.keras.Sequential()
-    model.add(tf.keras.layers.Flatten(input_shape=(1, 277, 277, 3)))
+    model.add(tf.keras.layers.InputLayer(input_shape=(154587)))
     model.add(tf.keras.layers.Dense(128, activation='relu'))
     model.add(tf.keras.layers.Dropout(0.2))
     model.add(tf.keras.layers.Dense(10, activation='softmax'))
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10)
+    r = model.fit(generator('X_train', 'y_train', 32, 10),steps_per_epoch=int(28000/32), validation_data=(generator('X_val', 'y_val', 32, 10)), validation_steps=int(6000/32), epochs=10)
+    plt.plot(r.history['loss'], label = 'loss')
+    plt.plot(r.history['val_loss'], label = 'val_loss')
+    plt.legend()
+    plt.plot(r.history['accuracy'], label = 'acc')
+    plt.plot(r.history['val_accuracy'], label = 'val_acc')
+    plt.legend()
+    print(model.evaluate[generate('X_test', 'y_test', 1, 1)])
